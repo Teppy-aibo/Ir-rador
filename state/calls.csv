@@ -1,0 +1,3 @@
+id,date,time,code,name,title,score,is_negative,timing,notified,price_at_alert,target_price
+test1,20261029,15:30,9766,コナミG,テスト（上方修正・増配）,96,0,翌朝の寄り向き,1,,
+test2,20261030,15:30,7537,丸文,テスト（上方修正・増配）,90,0,翌朝の寄り向き,0,,

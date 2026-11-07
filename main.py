@@ -31,6 +31,9 @@ from bs4 import BeautifulSoup
 
 JST = dt.timezone(dt.timedelta(hours=9))
 STATE_FILE = Path(__file__).parent / "state" / "seen.json"
+CALLS_FILE = Path(__file__).parent / "state" / "calls.csv"
+CALLS_HEADER = ["id", "date", "time", "code", "name", "title", "score", "is_negative",
+                "timing", "notified", "price_at_alert", "target_price"]
 UA = {"User-Agent": "Mozilla/5.0 (ir-rador personal notifier)"}
 
 THRESHOLD = int(os.environ.get("THRESHOLD", "95"))
@@ -284,6 +287,22 @@ def score(client: anthropic.Anthropic, model: str, item: dict, pdf_b64: str, mkt
     return json.loads(text)
 
 
+# ---------- 答え合わせ用の記録 ----------
+
+def log_call(day: str, it: dict, mkt: dict, res: dict, notified_now: bool) -> None:
+    """本採点した開示をすべて記録する（review.py が翌営業日に値動きを埋める）。"""
+    import csv
+    new = not CALLS_FILE.exists()
+    CALLS_FILE.parent.mkdir(exist_ok=True)
+    with CALLS_FILE.open("a", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(CALLS_HEADER)
+        w.writerow([it["id"], day, it["time"], it["code"], it["name"], it["title"][:80],
+                    res["score"], int(res["is_negative"]), res["timing"], int(notified_now),
+                    mkt["price"], res["target_price"]])
+
+
 # ---------- 通知 ----------
 
 def notify(item: dict, mkt: dict, res: dict) -> None:
@@ -341,12 +360,16 @@ def main() -> None:
                     continue
             res = score(client, FINAL_MODEL, it, b64, mkt)
             print(f"  本採点 {res['score']:>3} {it['code']} {it['name']} {it['title']}")
+            sent = False
             if res["score"] >= THRESHOLD and not res["is_negative"]:
                 if it["code"] in notified:
                     print("    同じ銘柄はこの日すでに通知済みのため省略")
                 else:
                     notify(it, mkt, res)
                     notified.add(it["code"])
+                    sent = True
+            if not DRY_RUN:
+                log_call(day, it, mkt, res, sent)
             seen.add(it["id"])
         except anthropic.BadRequestError as e:
             print(f"  失敗 {it['code']} {it['title']}: {e}", file=sys.stderr)
