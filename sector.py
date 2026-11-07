@@ -5,7 +5,7 @@
 記録するもの（state/sector_daily.csv、1日17行）:
   騰落率   1日・5日・20日
   相対     TOPIX（1306）との差。プラスならTOPIXより強い＝資金が入っている
-  売買代金 20日平均との比（1.5倍以上は「資金が集まった」目安）
+  売買代金 20日平均との比（2倍以上は「資金が集まった」目安）
   局面     20日相対（強さ）と5日相対（勢い）で4つに分ける
              主導 = 強い＆まだ勢いあり   失速 = 強いが勢いが落ちた
              出遅れ = 弱い＆勢いもない   改善 = 弱いが勢いが出てきた（次の主導候補）
@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import math
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -47,7 +49,7 @@ def download():
     import yfinance as yf
     tickers = [f"{c}.T" for c in [*SECTORS, BENCH]]
     df = yf.download(tickers, period="1y", interval="1d", auto_adjust=False,
-                     progress=False, group_by="column", threads=True)
+                     progress=False, group_by="column", threads=False)
     close = df["Close"].rename(columns=lambda t: t.replace(".T", ""))
     vol = df["Volume"].rename(columns=lambda t: t.replace(".T", ""))
     # 一部ETFは売買が薄く値が付かない日がある → 前日の値で埋める（騰落0扱い）
@@ -55,6 +57,17 @@ def download():
     vol = vol.reindex(close.index).fillna(0)
     close.index = [d.date() for d in close.index]
     vol.index = close.index
+    # 取りこぼした銘柄は1つずつ取り直す
+    for code in [c for c in close.columns if close[c].isna().all()]:
+        for _ in range(3):
+            time.sleep(3)
+            one = yf.Ticker(f"{code}.T").history(period="1y", auto_adjust=False)
+            if not one.empty:
+                one.index = [d.date() for d in one.index]
+                close[code] = one["Close"].reindex(close.index).ffill()
+                vol[code] = one["Volume"].reindex(close.index).fillna(0)
+                print(f"{code}: 取り直し成功")
+                break
     return close, vol
 
 
@@ -76,6 +89,9 @@ def compute(close, vol, i: int) -> tuple[list[dict], dict]:
     rows = []
     for code, name in SECTORS.items():
         r1, r5, r20 = ret(code, 1), ret(code, 5), ret(code, 20)
+        if any(math.isnan(x) for x in (r1, r5, r20)):
+            print(f"{code} {name}: データなしのため除外")
+            continue
         avg = turnover[code].iloc[i - 20:i].mean()
         tr = round(float(turnover[code].iloc[i] / avg), 2) if avg > 0 else ""
         rel5, rel20 = round(r5 - b5, 2), round(r20 - b20, 2)
@@ -89,8 +105,9 @@ def compute(close, vol, i: int) -> tuple[list[dict], dict]:
             r[key] = n
 
     up = sum(1 for r in rows if r["ret1"] > 0)
-    denki = next(r for r in rows if r["code"] == "1625")
-    if up >= 14:
+    denki = next((r for r in rows if r["code"] == "1625"), {"rank1": 99, "rel1": 0})
+    n = len(rows)
+    if up >= n - 3:
         regime = "全面高"
     elif up <= 3:
         regime = "全面安"
@@ -131,11 +148,11 @@ def message(rows: list[dict], reg: dict, prev: list[dict]) -> dict:
 
     def line(r: dict) -> str:
         s = f"{r['name']} {r['ret1']:+.1f}%（対TOPIX {r['rel1']:+.1f}）"
-        if r["turnover_ratio"] != "" and r["turnover_ratio"] >= 1.5:
+        if r["turnover_ratio"] != "" and r["turnover_ratio"] >= 2.0:
             s += f" 💰代金{r['turnover_ratio']:.1f}倍"
         return s
 
-    parts = [f"**地合い: {reg['regime']}**　TOPIX {reg['topix_ret1']:+.2f}% / 上昇 {reg['up_count']}/17業種"]
+    parts = [f"**地合い: {reg['regime']}**　TOPIX {reg['topix_ret1']:+.2f}% / 上昇 {reg['up_count']}/{len(rows)}業種"]
     parts.append("**今日強い**\n" + "\n".join("📈 " + line(r) for r in by1[:3]))
     parts.append("**今日弱い**\n" + "\n".join("📉 " + line(r) for r in by1[-3:][::-1]))
 
@@ -184,7 +201,8 @@ def main() -> None:
         all_regs.append(reg)
 
     old_daily = load(DAILY)
-    rows, reg = all_rows[-17:], all_regs[-1]
+    reg = all_regs[-1]
+    rows = [r for r in all_rows if r["date"] == reg["date"]]
     prev_day = close.index[last - 1].strftime("%Y%m%d")
     prev = [r for r in all_rows if r["date"] == prev_day] or \
            [r for r in old_daily if r["date"] == prev_day]
