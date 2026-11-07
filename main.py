@@ -10,6 +10,7 @@
   SCREEN_THRESHOLD    一次採点でこの点以上だけ本採点へ（既定 70）
   THRESHOLD           通知する点数（既定 85）
   MAX_PER_RUN         1回で採点する最大件数（既定 30。残りは次回）
+  SKIP_INTRADAY=1     9:00〜14:59の開示は採点しない（夕方〜朝だけ見る）
   FORCE=1             時間帯チェックを無視して実行（テスト用）
   DRY_RUN=1           通知せず結果を表示するだけ（テスト用）
   TARGET_DATE         YYYYMMDD を指定するとその日の開示を対象にする（テスト用）
@@ -40,6 +41,7 @@ THRESHOLD = int(os.environ.get("THRESHOLD", "85"))
 FINAL_MODEL = os.environ.get("FINAL_MODEL", "claude-opus-5-5")
 SCREEN_MODEL = os.environ.get("SCREEN_MODEL", "").strip()
 SCREEN_THRESHOLD = int(os.environ.get("SCREEN_THRESHOLD", "70"))
+SKIP_INTRADAY = os.environ.get("SKIP_INTRADAY") == "1"  # 9:00〜14:59の開示は採点しない
 WORKERS = int(os.environ.get("WORKERS", "6"))  # 同時に採点する件数
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "30"))
 MAX_PAGES = int(os.environ.get("MAX_PAGES", "4"))  # AIに渡すPDFの先頭ページ数（費用を抑えるため）
@@ -344,7 +346,7 @@ def main() -> None:
     client = anthropic.Anthropic()
     targets = []
     for it in new:
-        if not title_ok(it["title"]):
+        if not title_ok(it["title"]) or (SKIP_INTRADAY and "09:00" <= it["time"] < "15:00"):
             seen.add(it["id"])
         elif len(targets) < MAX_PER_RUN:
             targets.append(it)  # 上限を超えた分は次回
