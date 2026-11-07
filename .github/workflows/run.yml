@@ -43,12 +43,13 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          SCREEN_MODEL: ${{ vars.SCREEN_MODEL }}
+          SCREEN_MODEL: ${{ vars.SCREEN_MODEL || 'claude-haiku-5-5' }}
           FINAL_MODEL: ${{ vars.FINAL_MODEL || 'claude-opus-5-5' }}
           THRESHOLD: ${{ inputs.threshold || vars.THRESHOLD || '95' }}
           DRY_RUN: ${{ inputs.dry_run || '0' }}
           TARGET_DATE: ${{ inputs.target_date }}
           MAX_PER_RUN: ${{ inputs.max_per_run || '30' }}
+          MAX_PAGES: ${{ vars.MAX_PAGES || '4' }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: python main.py
       - name: Save seen list

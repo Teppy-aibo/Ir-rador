@@ -5,7 +5,8 @@
   ANTHROPIC_API_KEY   必須
   DISCORD_WEBHOOK_URL 必須（DRY_RUN=1 のときは不要）
   FINAL_MODEL         本採点のモデル（既定 claude-opus-5-5）
-  SCREEN_MODEL        一次採点のモデル（空なら一次採点なし。例 claude-haiku-5-5）
+  SCREEN_MODEL        一次採点のモデル（空なら一次採点なし。ワークフローの既定 claude-haiku-5-5）
+  MAX_PAGES           AIに渡すPDFの先頭ページ数（既定 4）
   SCREEN_THRESHOLD    一次採点でこの点以上だけ本採点へ（既定 80）
   THRESHOLD           通知する点数（既定 95）
   MAX_PER_RUN         1回で採点する最大件数（既定 30。残りは次回）
@@ -37,6 +38,7 @@ FINAL_MODEL = os.environ.get("FINAL_MODEL", "claude-opus-5-5")
 SCREEN_MODEL = os.environ.get("SCREEN_MODEL", "").strip()
 SCREEN_THRESHOLD = int(os.environ.get("SCREEN_THRESHOLD", "80"))
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "30"))
+MAX_PAGES = int(os.environ.get("MAX_PAGES", "4"))  # AIに渡すPDFの先頭ページ数（費用を抑えるため）
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
 TOKENS: dict[str, list[int]] = {}
 # 100万トークンあたりのドル（入力, 出力）。費用の目安表示用
@@ -185,6 +187,27 @@ def market_info(code: str) -> dict:
     return info
 
 
+# ---------- PDFを先頭ページだけにする ----------
+
+def trim_pdf(pdf: bytes, pages: int) -> bytes:
+    """要点はほぼ先頭数ページ（決算短信の1枚目サマリーなど）にあるので、そこだけ渡す。"""
+    try:
+        import io
+        from pypdf import PdfReader, PdfWriter
+        reader = PdfReader(io.BytesIO(pdf))
+        if len(reader.pages) <= pages:
+            return pdf
+        w = PdfWriter()
+        for i in range(pages):
+            w.add_page(reader.pages[i])
+        out = io.BytesIO()
+        w.write(out)
+        return out.getvalue()
+    except Exception as e:  # noqa: BLE001
+        print(f"  PDFの切り出しに失敗（全ページで続行）: {e}", file=sys.stderr)
+        return pdf
+
+
 # ---------- AI採点 ----------
 
 SYSTEM = """あなたは日本株の短期トレーダーを手伝うアナリストです。TDnetの適時開示PDFを読み、
@@ -305,7 +328,7 @@ def main() -> None:
             break  # 残りは次回
         done += 1
         try:
-            pdf = requests.get(it["pdf"], headers=UA, timeout=60).content
+            pdf = trim_pdf(requests.get(it["pdf"], headers=UA, timeout=60).content, MAX_PAGES)
             b64 = base64.standard_b64encode(pdf).decode()
             mkt = market_info(it["code"])
             if SCREEN_MODEL:
@@ -323,6 +346,12 @@ def main() -> None:
                     notify(it, mkt, res)
                     notified.add(it["code"])
             seen.add(it["id"])
+        except anthropic.BadRequestError as e:
+            print(f"  失敗 {it['code']} {it['title']}: {e}", file=sys.stderr)
+            if "credit balance" in str(e):
+                print("APIのクレジット残高不足のため中断します", file=sys.stderr)
+                save_seen(day, seen, notified)
+                sys.exit(1)
         except Exception as e:  # noqa: BLE001
             # 失敗したものは既読にせず次回やり直す
             print(f"  失敗 {it['code']} {it['title']}: {e}", file=sys.stderr)
