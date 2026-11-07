@@ -38,6 +38,9 @@ SCREEN_MODEL = os.environ.get("SCREEN_MODEL", "").strip()
 SCREEN_THRESHOLD = int(os.environ.get("SCREEN_THRESHOLD", "80"))
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "30"))
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
+TOKENS: dict[str, list[int]] = {}
+# 100万トークンあたりのドル（入力, 出力）。費用の目安表示用
+PRICE = {"claude-opus-5-5": (4, 20), "claude-sonnet-5-5": (2, 10), "claude-haiku-5-5": (0.1, 0.5)}
 
 # タイトルによる一次絞り込み（この語を含むものだけ読む）
 INCLUDE = [
@@ -71,18 +74,20 @@ def in_window(now: dt.datetime) -> bool:
 
 # ---------- 既読管理 ----------
 
-def load_seen(day: str) -> set[str]:
+def load_seen(day: str) -> tuple[set[str], set[str]]:
+    """(既読の開示ID, その日すでに通知した銘柄コード)"""
     if STATE_FILE.exists():
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         if data.get("date") == day:
-            return set(data.get("ids", []))
-    return set()
+            return set(data.get("ids", [])), set(data.get("notified", []))
+    return set(), set()
 
 
-def save_seen(day: str, ids: set[str]) -> None:
+def save_seen(day: str, ids: set[str], notified: set[str]) -> None:
     STATE_FILE.parent.mkdir(exist_ok=True)
     STATE_FILE.write_text(
-        json.dumps({"date": day, "ids": sorted(ids)}, ensure_ascii=False, indent=0),
+        json.dumps({"date": day, "ids": sorted(ids), "notified": sorted(notified)},
+                   ensure_ascii=False, indent=0),
         encoding="utf-8",
     )
 
@@ -246,6 +251,10 @@ def score(client: anthropic.Anthropic, model: str, item: dict, pdf_b64: str, mkt
             ],
         }],
     )
+    u = resp.usage
+    TOKENS.setdefault(model, [0, 0])
+    TOKENS[model][0] += u.input_tokens
+    TOKENS[model][1] += u.output_tokens
     if resp.stop_reason == "refusal":
         raise RuntimeError("モデルが回答を拒否しました")
     text = "".join(b.text for b in resp.content if b.type == "text")
@@ -281,7 +290,7 @@ def main() -> None:
         print("時間外のため終了")
         return
     day = os.environ.get("TARGET_DATE") or now.strftime("%Y%m%d")
-    seen = load_seen(day)
+    seen, notified = load_seen(day)
     items = fetch_list(day)
     new = [it for it in items if it["id"] not in seen]
     print(f"{day}: 一覧 {len(items)} 件 / 新着 {len(new)} 件")
@@ -308,14 +317,26 @@ def main() -> None:
             res = score(client, FINAL_MODEL, it, b64, mkt)
             print(f"  本採点 {res['score']:>3} {it['code']} {it['name']} {it['title']}")
             if res["score"] >= THRESHOLD and not res["is_negative"]:
-                notify(it, mkt, res)
+                if it["code"] in notified:
+                    print("    同じ銘柄はこの日すでに通知済みのため省略")
+                else:
+                    notify(it, mkt, res)
+                    notified.add(it["code"])
             seen.add(it["id"])
         except Exception as e:  # noqa: BLE001
             # 失敗したものは既読にせず次回やり直す
             print(f"  失敗 {it['code']} {it['title']}: {e}", file=sys.stderr)
         finally:
-            save_seen(day, seen)
-    save_seen(day, seen)
+            save_seen(day, seen, notified)
+    save_seen(day, seen, notified)
+    total = 0.0
+    for m, (i, o) in TOKENS.items():
+        pi, po = PRICE.get(m, (4, 20))
+        cost = i / 1e6 * pi + o / 1e6 * po
+        total += cost
+        print(f"使用量 {m}: 入力 {i:,} / 出力 {o:,} トークン ≈ ${cost:.3f}")
+    if TOKENS:
+        print(f"今回の費用の目安: ${total:.3f}（約{total*150:.0f}円）")
 
 
 if __name__ == "__main__":
