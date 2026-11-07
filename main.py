@@ -364,6 +364,15 @@ def main() -> None:
                 if first["score"] < SCREEN_THRESHOLD or first["is_negative"]:
                     return it, mkt, None, None
             res = score(client, FINAL_MODEL, it, b64, mkt)
+            # 採点は毎回±5点ほどぶれるので、通知の基準の前後は2回採点して平均を取る
+            if abs(res["score"] - THRESHOLD) <= 5:
+                res2 = score(client, FINAL_MODEL, it, b64, mkt)
+                avg = round((res["score"] + res2["score"]) / 2)
+                print(f"  再採点 {res['score']}→{res2['score']} 平均 {avg} {it['code']}", flush=True)
+                if res2["score"] > res["score"]:
+                    res = res2  # 説明文は点数の高いほうを使う
+                res["score"] = avg
+                res["breakdown"] += f"（2回採点の平均）"
             print(f"  本採点 {res['score']:>3} {it['code']} {it['name']} {it['title']}", flush=True)
             return it, mkt, res, None
         except Exception as e:  # noqa: BLE001
