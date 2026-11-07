@@ -25,7 +25,7 @@ Settings → Secrets and variables → Actions → **Secrets** に登録:
 |---|---|---|
 | `THRESHOLD` | 95 | 通知する点数 |
 | `FINAL_MODEL` | claude-opus-5-5 | 採点に使うモデル |
-| `SCREEN_MODEL` | claude-haiku-5-5 | 一次採点用の安いモデル。80点以上だけ `FINAL_MODEL` で本採点 |
+| `SCREEN_MODEL` | claude-haiku-5-5 | 一次採点用の安いモデル。60点以上（と買われる側のTOB・MBO）だけ `FINAL_MODEL` で本採点 |
 | `MAX_PAGES` | 4 | AIに渡すPDFの先頭ページ数 |
 
 ## テスト実行

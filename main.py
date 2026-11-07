@@ -7,7 +7,7 @@
   FINAL_MODEL         本採点のモデル（既定 claude-opus-5-5）
   SCREEN_MODEL        一次採点のモデル（空なら一次採点なし。ワークフローの既定 claude-haiku-5-5）
   MAX_PAGES           AIに渡すPDFの先頭ページ数（既定 4）
-  SCREEN_THRESHOLD    一次採点でこの点以上だけ本採点へ（既定 80）
+  SCREEN_THRESHOLD    一次採点でこの点以上だけ本採点へ（既定 60）
   THRESHOLD           通知する点数（既定 95）
   MAX_PER_RUN         1回で採点する最大件数（既定 30。残りは次回）
   FORCE=1             時間帯チェックを無視して実行（テスト用）
@@ -36,7 +36,7 @@ UA = {"User-Agent": "Mozilla/5.0 (ir-rador personal notifier)"}
 THRESHOLD = int(os.environ.get("THRESHOLD", "95"))
 FINAL_MODEL = os.environ.get("FINAL_MODEL", "claude-opus-5-5")
 SCREEN_MODEL = os.environ.get("SCREEN_MODEL", "").strip()
-SCREEN_THRESHOLD = int(os.environ.get("SCREEN_THRESHOLD", "80"))
+SCREEN_THRESHOLD = int(os.environ.get("SCREEN_THRESHOLD", "60"))
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "30"))
 MAX_PAGES = int(os.environ.get("MAX_PAGES", "4"))  # AIに渡すPDFの先頭ページ数（費用を抑えるため）
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
@@ -331,7 +331,9 @@ def main() -> None:
             pdf = trim_pdf(requests.get(it["pdf"], headers=UA, timeout=60).content, MAX_PAGES)
             b64 = base64.standard_b64encode(pdf).decode()
             mkt = market_info(it["code"])
-            if SCREEN_MODEL:
+            # 買われる側のTOB・MBOは一次採点で過小評価されやすいので、必ず本採点へ
+            target_tob = "公開買付" in it["title"] and ("当社" in it["title"] or "による" in it["title"])
+            if SCREEN_MODEL and not target_tob:
                 first = score(client, SCREEN_MODEL, it, b64, mkt)
                 print(f"  一次 {first['score']:>3} {it['code']} {it['title']}")
                 if first["score"] < SCREEN_THRESHOLD or first["is_negative"]:
