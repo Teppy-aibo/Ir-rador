@@ -8,7 +8,7 @@
   SCREEN_MODEL        一次採点のモデル（空なら一次採点なし。ワークフローの既定 claude-haiku-5-5）
   MAX_PAGES           AIに渡すPDFの先頭ページ数（既定 4）
   SCREEN_THRESHOLD    一次採点でこの点以上だけ本採点へ（既定 70）
-  THRESHOLD           通知する点数（既定 95）
+  THRESHOLD           通知する点数（既定 85）
   MAX_PER_RUN         1回で採点する最大件数（既定 30。残りは次回）
   FORCE=1             時間帯チェックを無視して実行（テスト用）
   DRY_RUN=1           通知せず結果を表示するだけ（テスト用）
@@ -36,7 +36,7 @@ CALLS_HEADER = ["id", "date", "time", "code", "name", "title", "score", "is_nega
                 "timing", "notified", "price_at_alert", "target_price"]
 UA = {"User-Agent": "Mozilla/5.0 (ir-rador personal notifier)"}
 
-THRESHOLD = int(os.environ.get("THRESHOLD", "95"))
+THRESHOLD = int(os.environ.get("THRESHOLD", "85"))
 FINAL_MODEL = os.environ.get("FINAL_MODEL", "claude-opus-5-5")
 SCREEN_MODEL = os.environ.get("SCREEN_MODEL", "").strip()
 SCREEN_THRESHOLD = int(os.environ.get("SCREEN_THRESHOLD", "70"))
