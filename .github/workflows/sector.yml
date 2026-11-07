@@ -11,9 +11,6 @@ on:
       backfill_days:
         description: "過去何日分もまとめて記録するか（初回は200がおすすめ、普段は0）"
         default: "0"
-  push:  # 動作確認用（あとで消す）
-    branches: [claude/project-thread-5xjpq2]
-    paths: [sector.py, .github/workflows/sector.yml]
 
 permissions:
   contents: write
@@ -37,12 +34,12 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SECTOR_WEBHOOK_URL: ${{ secrets.SECTOR_WEBHOOK_URL }}
-          DRY_RUN: ${{ github.event_name == 'push' && '1' || inputs.dry_run || '0' }}
-          BACKFILL_DAYS: ${{ github.event_name == 'push' && '200' || inputs.backfill_days || '0' }}
+          DRY_RUN: ${{ inputs.dry_run || '0' }}
+          BACKFILL_DAYS: ${{ inputs.backfill_days || '0' }}
           PYTHONUNBUFFERED: "1"
         run: python sector.py
       - name: Save
-        if: github.event_name != 'push'
+        if: inputs.dry_run != '1'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
