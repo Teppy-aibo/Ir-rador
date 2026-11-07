@@ -1,0 +1,59 @@
+name: ir-rador
+
+on:
+  schedule:
+    # GitHubの時刻はUTC。JST 8:30〜20:00（平日）を5分おき。時間の細かい判定はmain.pyで行う。
+    - cron: "*/5 23 * * 0-4"   # JST 8:00〜8:55（月〜金）
+    - cron: "*/5 0-10 * * 1-5" # JST 9:00〜19:55
+    - cron: "0 11 * * 1-5"     # JST 20:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "通知せずログに出すだけ（1=はい）"
+        default: "1"
+      target_date:
+        description: "対象日 YYYYMMDD（空なら今日）"
+        default: ""
+      threshold:
+        description: "通知する点数（テスト用に下げられます）"
+        default: "95"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ir-rador
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SCREEN_MODEL: ${{ vars.SCREEN_MODEL }}
+          FINAL_MODEL: ${{ vars.FINAL_MODEL || 'claude-opus-5-5' }}
+          THRESHOLD: ${{ inputs.threshold || vars.THRESHOLD || '95' }}
+          DRY_RUN: ${{ inputs.dry_run || '0' }}
+          TARGET_DATE: ${{ inputs.target_date }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+        run: python main.py
+      - name: Save seen list
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add state/seen.json 2>/dev/null || exit 0
+          git diff --cached --quiet && exit 0
+          git commit -m "update seen"
+          git pull --rebase -X theirs || true
+          git push
