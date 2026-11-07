@@ -7,7 +7,7 @@
   FINAL_MODEL         本採点のモデル（既定 claude-opus-5-5）
   SCREEN_MODEL        一次採点のモデル（空なら一次採点なし。ワークフローの既定 claude-haiku-5-5）
   MAX_PAGES           AIに渡すPDFの先頭ページ数（既定 4）
-  SCREEN_THRESHOLD    一次採点でこの点以上だけ本採点へ（既定 60）
+  SCREEN_THRESHOLD    一次採点でこの点以上だけ本採点へ（既定 70）
   THRESHOLD           通知する点数（既定 95）
   MAX_PER_RUN         1回で採点する最大件数（既定 30。残りは次回）
   FORCE=1             時間帯チェックを無視して実行（テスト用）
@@ -39,11 +39,14 @@ UA = {"User-Agent": "Mozilla/5.0 (ir-rador personal notifier)"}
 THRESHOLD = int(os.environ.get("THRESHOLD", "95"))
 FINAL_MODEL = os.environ.get("FINAL_MODEL", "claude-opus-5-5")
 SCREEN_MODEL = os.environ.get("SCREEN_MODEL", "").strip()
-SCREEN_THRESHOLD = int(os.environ.get("SCREEN_THRESHOLD", "60"))
+SCREEN_THRESHOLD = int(os.environ.get("SCREEN_THRESHOLD", "70"))
+WORKERS = int(os.environ.get("WORKERS", "6"))  # 同時に採点する件数
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "30"))
 MAX_PAGES = int(os.environ.get("MAX_PAGES", "4"))  # AIに渡すPDFの先頭ページ数（費用を抑えるため）
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
 TOKENS: dict[str, list[int]] = {}
+import threading
+LOCK = threading.Lock()
 # 100万トークンあたりのドル（入力, 出力）。費用の目安表示用
 PRICE = {"claude-opus-5-5": (4, 20), "claude-sonnet-5-5": (2, 10), "claude-haiku-5-5": (0.1, 0.5)}
 
@@ -278,9 +281,10 @@ def score(client: anthropic.Anthropic, model: str, item: dict, pdf_b64: str, mkt
         }],
     )
     u = resp.usage
-    TOKENS.setdefault(model, [0, 0])
-    TOKENS[model][0] += u.input_tokens
-    TOKENS[model][1] += u.output_tokens
+    with LOCK:
+        TOKENS.setdefault(model, [0, 0])
+        TOKENS[model][0] += u.input_tokens
+        TOKENS[model][1] += u.output_tokens
     if resp.stop_reason == "refusal":
         raise RuntimeError("モデルが回答を拒否しました")
     text = "".join(b.text for b in resp.content if b.type == "text")
@@ -338,14 +342,16 @@ def main() -> None:
     print(f"{day}: 一覧 {len(items)} 件 / 新着 {len(new)} 件")
 
     client = anthropic.Anthropic()
-    done = 0
+    targets = []
     for it in new:
         if not title_ok(it["title"]):
             seen.add(it["id"])
-            continue
-        if done >= MAX_PER_RUN:
-            break  # 残りは次回
-        done += 1
+        elif len(targets) < MAX_PER_RUN:
+            targets.append(it)  # 上限を超えた分は次回
+    save_seen(day, seen, notified)
+
+    def evaluate(it: dict):
+        """PDF取得〜採点（並列で実行）。戻り値: (it, mkt, res or None, error or None)"""
         try:
             pdf = trim_pdf(requests.get(it["pdf"], headers=UA, timeout=60).content, MAX_PAGES)
             b64 = base64.standard_b64encode(pdf).decode()
@@ -354,33 +360,46 @@ def main() -> None:
             target_tob = "公開買付" in it["title"] and ("当社" in it["title"] or "による" in it["title"])
             if SCREEN_MODEL and not target_tob:
                 first = score(client, SCREEN_MODEL, it, b64, mkt)
-                print(f"  一次 {first['score']:>3} {it['code']} {it['title']}")
+                print(f"  一次 {first['score']:>3} {it['code']} {it['title']}", flush=True)
                 if first["score"] < SCREEN_THRESHOLD or first["is_negative"]:
-                    seen.add(it["id"])
-                    continue
+                    return it, mkt, None, None
             res = score(client, FINAL_MODEL, it, b64, mkt)
-            print(f"  本採点 {res['score']:>3} {it['code']} {it['name']} {it['title']}")
-            sent = False
-            if res["score"] >= THRESHOLD and not res["is_negative"]:
-                if it["code"] in notified:
-                    print("    同じ銘柄はこの日すでに通知済みのため省略")
-                else:
-                    notify(it, mkt, res)
-                    notified.add(it["code"])
-                    sent = True
-            if not DRY_RUN:
-                log_call(day, it, mkt, res, sent)
-            seen.add(it["id"])
-        except anthropic.BadRequestError as e:
-            print(f"  失敗 {it['code']} {it['title']}: {e}", file=sys.stderr)
-            if "credit balance" in str(e):
-                print("APIのクレジット残高不足のため中断します", file=sys.stderr)
-                save_seen(day, seen, notified)
-                sys.exit(1)
+            print(f"  本採点 {res['score']:>3} {it['code']} {it['name']} {it['title']}", flush=True)
+            return it, mkt, res, None
         except Exception as e:  # noqa: BLE001
-            # 失敗したものは既読にせず次回やり直す
-            print(f"  失敗 {it['code']} {it['title']}: {e}", file=sys.stderr)
-        finally:
+            return it, None, None, e
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        futures = [pool.submit(evaluate, it) for it in targets]
+        for fut in as_completed(futures):
+            it, mkt, res, err = fut.result()
+            if err is not None:
+                # 失敗したものは既読にせず次回やり直す
+                print(f"  失敗 {it['code']} {it['title']}: {err}", file=sys.stderr, flush=True)
+                if "credit balance" in str(err):
+                    print("APIのクレジット残高不足のため中断します", file=sys.stderr)
+                    for f in futures:
+                        f.cancel()
+                    save_seen(day, seen, notified)
+                    sys.exit(1)
+                continue
+            if res is not None:
+                sent = False
+                if res["score"] >= THRESHOLD and not res["is_negative"]:
+                    if it["code"] in notified:
+                        print("    同じ銘柄はこの日すでに通知済みのため省略")
+                    else:
+                        try:
+                            notify(it, mkt, res)
+                            notified.add(it["code"])
+                            sent = True
+                        except Exception as e:  # noqa: BLE001
+                            print(f"  通知失敗 {it['code']}: {e}", file=sys.stderr)
+                            continue
+                if not DRY_RUN:
+                    log_call(day, it, mkt, res, sent)
+            seen.add(it["id"])
             save_seen(day, seen, notified)
     save_seen(day, seen, notified)
     total = 0.0
