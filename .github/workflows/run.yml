@@ -1,11 +1,12 @@
 name: ir-rador
 
 on:
-  schedule:
-    # GitHubの時刻はUTC。JST 8:30〜20:00（平日）を5分おき。時間の細かい判定はmain.pyで行う。
-    - cron: "*/5 23 * * 0-4"   # JST 8:00〜8:55（月〜金）
-    - cron: "*/5 0-10 * * 1-5" # JST 9:00〜19:55
-    - cron: "0 11 * * 1-5"     # JST 20:00
+  # 定時実行は停止中（11/12、IR通知はApps Scriptに移行。二重通知を防ぐため）。
+  # 戻すときは下の3行を on: の下に戻す:
+  #   schedule:
+  #     - cron: "*/5 23 * * 0-4"   # JST 8:00〜8:55（月〜金）
+  #     - cron: "*/5 0-10 * * 1-5" # JST 9:00〜19:55
+  #     - cron: "0 11 * * 1-5"     # JST 20:00
   workflow_dispatch:
     inputs:
       dry_run:

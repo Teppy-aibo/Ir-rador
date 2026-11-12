@@ -1,8 +1,9 @@
 name: answer-check
 
 on:
-  schedule:
-    - cron: "10 7 * * 1-5"   # JST 16:10（平日、大引け後）
+  # 定時実行は停止中（11/12、答え合わせはApps Scriptに移行）。戻すとき:
+  #   schedule:
+  #     - cron: "10 7 * * 1-5"   # JST 16:10（平日、大引け後）
   workflow_dispatch:
     inputs:
       dry_run:
