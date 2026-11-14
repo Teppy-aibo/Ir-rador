@@ -95,6 +95,9 @@ def main() -> None:
     a = ap.parse_args()
     syms = ["^SOX", "^VIX", "NIY=F", "^N225", "1306.T", "1321.T"] + [f"{c}.T" for c in UNIV["AI半導体"]]
     data = download(syms, a.period)
+    for s in syms:  # まとめて取ると yfinance の一時保存が詰まって落ちる記号があるので、1つずつ取り直す
+        if s not in data:
+            data.update(download([s], a.period))
     miss = [s for s in ("^SOX", "^VIX", "NIY=F", "^N225", "1306.T") if s not in data]
     if miss:
         raise SystemExit(f"取れなかった記号: {miss}")
