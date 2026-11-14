@@ -41,12 +41,15 @@ UNIV = {
     "1803", "1812", "5020", "1605", "9501", "9503", "4689", "4755", "2413", "6201", "7832", "9766",
     ],
 }
-JPX_LIST = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
+JPX_LIST = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j"  # 2026/11時点は .xlsx（以前は .xls）
 
 
 def prime_codes() -> list[str]:
     import requests
-    r = requests.get(JPX_LIST, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+    for ext in (".xlsx", ".xls"):
+        r = requests.get(JPX_LIST + ext, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+        if r.ok:
+            break
     r.raise_for_status()
     df = pd.read_excel(io.BytesIO(r.content), dtype=str)
     keep = df[df["市場・商品区分"].fillna("").str.contains("プライム")]
