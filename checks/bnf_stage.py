@@ -35,13 +35,16 @@ def run(codes: list[str], data: dict[str, pd.DataFrame], sox: pd.DataFrame) -> p
         vavg = pd.Series(v).rolling(20).mean().shift(1).to_numpy()  # 当日を含まない過去20日
         for i in range(21, len(b) - 1):
             rng = h[i] - l[i]
+            chg, to_o, to_c = (c[i] / c[i - 1] - 1) * 100, (o[i + 1] / c[i] - 1) * 100, (c[i + 1] / c[i] - 1) * 100
+            if max(abs(chg), abs(to_o), abs(to_c)) > 60:  # Yahoo の値の誤り（桁ずれ・分割の取りこぼし）を除く
+                continue
             rows.append(dict(
                 code=code, d=b.index[i], up=up[i],
-                chg=(c[i] / c[i - 1] - 1) * 100,
+                chg=chg,
                 vx=v[i] / vavg[i] if vavg[i] > 0 else np.nan,
                 pos=(c[i] - l[i]) / rng if rng > 0 else 0.5,  # 0=安値引け 1=高値引け
-                to_open=(o[i + 1] / c[i] - 1) * 100,
-                to_close=(c[i + 1] / c[i] - 1) * 100,
+                to_open=to_o,
+                to_close=to_c,
             ))
     return pd.DataFrame(rows)
 
