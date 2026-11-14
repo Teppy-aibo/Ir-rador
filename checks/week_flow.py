@@ -6,6 +6,7 @@ Apps Script の検証エンジン（E056〜E064）と同じ条件を、Apps Scri
 条件（すべて「前夜のSOXが75日線の上＝半導体がリスクオンの局面」に限る。比較用に局面なしも出す）
   型13  金曜: 月〜木で+3%以上の週は寄り→引けを売り / -3%以下の週は買い
   型12  月曜の寄りで買い→木曜の引け と 金曜の引け の比較
+        基準: リスクオン中にどの曜日の寄りで買っても4日目の引けまで持つ（月曜だけが特別かを見る）
   型14  火曜・水曜に-3%以上下げた翌朝に買い→金曜の引け / 今週-3%以上の日があった週の金曜の寄り→引け
 成績: 1回ごとの損益%（往復コスト0.1%込み）。同じ日に何銘柄も出たら日ごとに平均して1回と数え、t値と前半(〜2023)/後半(2024〜)を出す。
 """
@@ -40,12 +41,15 @@ UNIV = {
     "1803", "1812", "5020", "1605", "9501", "9503", "4689", "4755", "2413", "6201", "7832", "9766",
     ],
 }
-JPX_LIST = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
+JPX_LIST = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j"  # 2026/11時点は .xlsx（以前は .xls）
 
 
 def prime_codes() -> list[str]:
     import requests
-    r = requests.get(JPX_LIST, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+    for ext in (".xlsx", ".xls"):
+        r = requests.get(JPX_LIST + ext, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+        if r.ok:
+            break
     r.raise_for_status()
     df = pd.read_excel(io.BytesIO(r.content), dtype=str)
     keep = df[df["市場・商品区分"].fillna("").str.contains("プライム")]
@@ -53,7 +57,7 @@ def prime_codes() -> list[str]:
 
 
 def download(symbols: list[str], period: str = "6y") -> dict[str, pd.DataFrame]:
-    """Yahoo の日足。{記号: DataFrame(o,h,l,c) 日付の昇順}"""
+    """Yahoo の日足。{記号: DataFrame(open,high,low,close,volume) 日付の昇順}"""
     import yfinance as yf
     out: dict[str, pd.DataFrame] = {}
     for n in range(0, len(symbols), 100):
@@ -71,7 +75,7 @@ def download(symbols: list[str], period: str = "6y") -> dict[str, pd.DataFrame]:
         for s in part:
             if s not in df.columns.get_level_values(0):
                 continue
-            one = df[s][["Open", "High", "Low", "Close"]].dropna()
+            one = df[s][["Open", "High", "Low", "Close", "Volume"]].dropna()
             one = one[(one["Open"] > 0) & (one["Close"] > 0)]
             if len(one) > 100:
                 one.index = pd.to_datetime(one.index).tz_localize(None).normalize()
@@ -100,7 +104,7 @@ def run(codes: list[str], data: dict[str, pd.DataFrame], sox: pd.DataFrame) -> p
         o, c = b["o"].to_numpy(), b["c"].to_numpy()
         chg = np.r_[np.nan, (c[1:] / c[:-1] - 1) * 100]
         week = idx.to_period("W-SUN")
-        dow = idx.dayofweek + 1
+        dow = idx.day_of_week + 1
         up = sox_up75(sox, idx).to_numpy()
         # 週の最初の営業日の位置
         first = np.zeros(len(b), dtype=int)
@@ -121,6 +125,7 @@ def run(codes: list[str], data: dict[str, pd.DataFrame], sox: pd.DataFrame) -> p
                              oc=(c[i] / o[i] - 1) * 100,          # その日の寄り→引け
                              to_wend=(c[k] / o[i] - 1) * 100,     # その日の寄り→その週の最後の引け
                              wend_dow=int(dow[k]),
+                             to_4d=(c[i + 3] / o[i] - 1) * 100 if i + 3 < len(b) else np.nan,  # 寄りで買い→4日目の引け（曜日をまたいでよい）
                              to_thu=(c[i + 3] / o[i] - 1) * 100 if i + 3 < len(b) and week[i + 3] == week[i] and dow[i + 3] == 4 else np.nan))
     return pd.DataFrame(rows)
 
@@ -155,6 +160,11 @@ def checks(ev: pd.DataFrame) -> list[tuple[str, pd.Series, pd.Series]]:
     add("型13 リスクオフ 月〜木+3%以上の週の金曜を売り", off & fri & (ev["wkDays"] >= 3) & (ev["wk"] >= 3), "oc", -1)
     add("型13 リスクオフ 月〜木-3%以下の週の金曜を買い", off & fri & (ev["wkDays"] >= 3) & (ev["wk"] <= -3), "oc")
     add("型12 リスクオン 月曜の寄りで買い→木曜の引け", on & (ev["dow"] == 1), "to_thu")
+    # 型12の比べる基準: リスクオンならどの曜日に買っても4日持てば同じくらい上がるのか
+    add("型12基準 リスクオン 全部の日の寄りで買い→4日目の引け", on, "to_4d")
+    for k, w in enumerate("月火水木金", start=1):
+        add(f"型12基準 リスクオン {w}曜の寄りで買い→4日目の引け", on & (ev["dow"] == k), "to_4d")
+    add("型12基準 リスクオフ 全部の日の寄りで買い→4日目の引け", off, "to_4d")
     add("型12 リスクオン 月曜の寄りで買い→週の最後の引け", on & (ev["dow"] == 1) & (ev["wend_dow"] == 5), "to_wend")
     add("型14 リスクオン 火曜-3%以下→水曜の寄りで買い→週の最後の引け", on & (ev["dow"] == 3) & (ev["ret1"] <= -3), "to_wend")
     add("型14 リスクオン 水曜-3%以下→木曜の寄りで買い→週の最後の引け", on & (ev["dow"] == 4) & (ev["ret1"] <= -3), "to_wend")

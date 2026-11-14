@@ -54,4 +54,5 @@ Actions → ir-rador → Run workflow。`dry_run=1` なら通知せずログに�
 - `apps-script/` … Google Apps Script に貼っているコードの控え（履歴を残すため。詳しくは中の README）。
 - `checks/` と Actions の **heavy-check** … Apps Script の6分制限では回らない重い検証を、**手動で1回だけ**動かす。
   Actions → heavy-check → Run workflow で検証と対象を選ぶ。結果はその実行の Summary（表）と Artifacts（CSV）に出る。定時実行・自動コミットはしない。
-  - `week_flow` … 週の中の流れ（型12〜14: 木曜までが仕掛け・金曜の締め・週の途中の下げ）を日足6年分で検証。
+  - `week_flow` … 週の中の流れ（型12〜14: 木曜までが仕掛け・金曜の締め・週の途中の下げ）を日足6年分で検証。型12の比べる基準（リスクオン中にどの曜日に買っても4日持つ）も出す。
+  - `bnf_stage` … BNFの6段階（大きく動いた日の引けで買い→翌日の寄り/引けで売る。上げの日と下げの日、出来高2倍・引けの位置つき）を日足6年分で検証。

@@ -9,7 +9,7 @@ on:
       check:
         description: "検証"
         type: choice
-        options: [week_flow]
+        options: [week_flow, bnf_stage]
         default: week_flow
       universe:
         description: "対象"
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install yfinance pandas numpy requests xlrd
+      - run: pip install yfinance pandas numpy requests xlrd openpyxl
       - name: Run
         env:
           PYTHONUNBUFFERED: "1"
