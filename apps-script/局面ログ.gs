@@ -8,7 +8,8 @@
  * 「この局面の日だけ型（G7・H2・E040など）を使うと成績が上がるか」を検証すること。売買の推奨はしない。
  *   1層目 数字の層（機械）: 前夜のSOX・75日線、VIXと日経VIの過去1年での位置、ドル円、CMEの日経先物の窓、
  *                          TOPIX ETF の75日線、信用評価損益率 → 機械のラベル（リスクオン／リスクオフ／恐怖／油断）
- *   2層目 討論の層（AI）: 強気役・弱気役（ニュース＋数字）と数字役（数字だけ）が別々に判断 → まとめ役がラベルと自信の点数
+ *   出番の型: 検証で合格した型（G7・恐怖の朝の買い E040・H2）が今日使えるかを、数字から機械的に出す（無料）
+ *   2層目 討論の層（AI、任意）: スクリプトのプロパティ DEBATE_ON=1 のときだけ。強気役・弱気役・数字役→まとめ役（1日20〜30円）
  *   答え合わせ（16:15）: その日の TOPIX ETF・日経ETF・AI半導体8銘柄の寄り→引けを同じ行に書き足す
  *
  * 使うスクリプトのプロパティ（IR通知と共通）: ANTHROPIC_API_KEY、SECTOR_WEBHOOK_URL または DISCORD_WEBHOOK_URL
@@ -20,7 +21,7 @@ const KL_HEADER = ['date', '機械ラベル', 'SOX%', 'SOX75日線の上', 'VIX'
   'TOPIX75日線の上', '信用評価損益率', 'ニュース件数',
   '強気役_点', '強気役_ラベル', '弱気役_点', '弱気役_ラベル', '数字役_点', '数字役_ラベル',
   'まとめ_ラベル', 'まとめ_自信', 'まとめ_点', '勝った側', 'テーマ', '一言', '費用円',
-  '答え_TOPIX寄り引け%', '答え_日経寄り引け%', '答え_AI半導体寄り引け%', '答え_向き一致'];
+  '答え_TOPIX寄り引け%', '答え_日経寄り引け%', '答え_AI半導体寄り引け%', '答え_向き一致', '出番の型'];
 const KL_LABELS = ['リスクオン', 'リスクオフ', '恐怖', '油断'];
 const KL_AI8 = ['6857', '8035', '6920', '6146', '4062', '285A', '5801', '5803'];
 const KL_NEWS_Q = ['日経平均 OR 東証', '半導体 株価', '米国株 OR ナスダック OR ダウ', '円相場 OR 日銀 OR FRB', '地政学 OR 関税'];
@@ -206,6 +207,27 @@ function klDebate_(numText, news, ir) {
   return out;
 }
 
+// ---------- 出番の型（検証で合格した決め事の当てはめ） ----------
+
+function klTypes_(x) {
+  const out = [];
+  out.push(x.topixUp75 === false ? '🩳 **G7 出番あり**：8:59の気配が+8〜20%の大型株(108)を寄り成売り・損切り2%・利確2R・引け成'
+    : `G7 出番なし（TOPIX ETF が75日線の${x.topixUp75 === '' ? '?' : '上'}）`);
+  out.push(x.nviPct !== '' && x.nviPct >= 0.9
+    ? '🛒 **恐怖の朝の買い(E040) 出番あり**：-2%以上下で寄った大型株を寄りで買い→3日目の引け（窓-6%以下・暴落2日目はより強い）'
+    : `恐怖の朝の買い(E040) 出番なし（日経VIの位置 ${x.nviPct === '' ? '不明' : x.nviPct}、0.9以上で出番）`);
+  try {
+    const sh = book_().getSheetByName('h2_now');
+    const v = sh && sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, 15).getValues() : [];
+    const old = Utilities.formatDate(new Date(Date.now() - 5 * 86400000), 'Asia/Tokyo', 'yyyyMMdd');
+    const picks = v.filter(r => String(r[12]).startsWith('候補') && (r[0] instanceof Date ? Utilities.formatDate(r[0], 'Asia/Tokyo', 'yyyyMMdd') : String(r[0]).replace(/-/g, '')) >= old);
+    out.push(picks.length ? '📈 **H2 シグナル**：' + picks.slice(0, 5).map(r =>
+      `${String(r[14]).startsWith('★') ? '★' : ''}${r[1]} ${r[2]}（損切り ${r[7]}・${r[12].includes('紙') ? '紙' : '実弾候補'}）`).join('／') : 'H2 シグナルなし');
+  } catch (e) { out.push('H2 読み取れず'); }
+  out.push('使わない：型12〜14（週の流れ）・BNFの引け買い（検証で不合格）');
+  return out;
+}
+
 // ---------- 入口 ----------
 
 function kyokumen_(dry) {
@@ -215,21 +237,28 @@ function kyokumen_(dry) {
   const x = klNumbers_(), numText = klNumbersText_(x);
   const news = klNews_(), ir = klIR_();
   Logger.log(numText + `\nニュース ${news.length}本・IR ${ir.length}本`);
-  const d = klDebate_(numText, news, ir);
+  const types = klTypes_(x);
+  const d = P.getProperty('DEBATE_ON') === '1' ? klDebate_(numText, news, ir) : { yen: 0 };
   const g = r => d[r] || {}, j = d.まとめ || {};
   const themes = (j.themes || []).map(t => `${t.wind === '追い風' ? '↑' : t.wind === '向かい風' ? '↓' : '→'}${t.theme}`).join(' ');
   const row = [today, x.label, x.sox, x.soxUp75, x.vix, x.vixPct, x.nvi, x.nviPct, x.usdjpy, x.cmeGap, x.topixUp75, x.mpl, news.length,
     g('強気役').score ?? '', g('強気役').label || '', g('弱気役').score ?? '', g('弱気役').label || '', g('数字役').score ?? '', g('数字役').label || '',
-    j.label || '', j.confidence ?? '', j.score ?? '', j.winner || '', themes, j.one_line || '', d.yen];
+    j.label || '', j.confidence ?? '', j.score ?? '', j.winner || '', themes, j.one_line || '', d.yen, '', '', '', '',
+    types.filter(t => t.includes('出番あり') || t.startsWith('📈')).map(t => t.replace(/\*\*/g, '').split('：')[0]).join(' / ') || 'なし'];
   const sc = v => v === undefined || v === '' ? '—' : (v > 0 ? '+' : '') + v;
-  const desc = `**${j.label || '判定できず'}**（自信 ${j.confidence ?? '—'}・向き ${sc(j.score)}）${j.one_line ? '\n' + j.one_line : ''}\n` +
-    `機械のラベル: ${x.label}\n\n` +
-    KL_ROLES.map(r => `${r.name} ${sc(g(r.name).score)} ${g(r.name).label || ''}：${(g(r.name).reasons || [])[0] || ''}`).join('\n') +
-    `\n勝った側: ${j.winner || '—'}\n` + ((j.themes || []).map(t => `${t.wind === '追い風' ? '📈' : t.wind === '向かい風' ? '📉' : '➖'} ${t.theme}：${t.reason}`).join('\n')) +
-    `\n\n※売買の推奨ではありません。型（G7・H2など）の決め事はそのまま。費用 約${d.yen}円`;
+  const sgn = v => v === '' ? '—' : (v >= 0 ? '+' : '') + v + '%';
+  let desc = `**機械のラベル: ${x.label}**\nSOX ${sgn(x.sox)}（75日線の${x.soxUp75 ? '上' : '下'}）／日経VI ${x.nvi || '—'}（位置 ${x.nviPct === '' ? '—' : x.nviPct}）／VIX ${x.vix || '—'}／CME ${sgn(x.cmeGap)}\n\n` +
+    `**今日の出番**\n${types.join('\n')}`;
+  if (d.まとめ) {
+    desc += `\n\n**AIの討論**：${j.label}（自信 ${j.confidence ?? '—'}・向き ${sc(j.score)}）${j.one_line ? ' ' + j.one_line : ''}\n` +
+      KL_ROLES.map(r => `${r.name} ${sc(g(r.name).score)}：${(g(r.name).reasons || [])[0] || ''}`).join('\n') +
+      ((j.themes || []).length ? '\n' + j.themes.map(t => `${t.wind === '追い風' ? '📈' : t.wind === '向かい風' ? '📉' : '➖'} ${t.theme}`).join('　') : '') + `\n費用 約${d.yen}円`;
+  }
+  desc += '\n\n※型の決め事の当てはめで、それ以外の売買の推奨ではありません。';
   Logger.log(desc);
   if (dry) return;
   const sh = sheet_('kyokumen', KL_HEADER);
+  if (sh.getLastRow() <= 1) sh.getRange(1, 1, 1, KL_HEADER.length).setValues([KL_HEADER]); // 列の追加に合わせて見出しを最新に
   const last = sh.getLastRow();
   if (last >= 2 && String(sh.getRange(last, 1).getValue()) === today) sh.getRange(last, 1, 1, row.length).setValues([row]);
   else sh.appendRow(row);

@@ -155,8 +155,8 @@ function morning_(dry, resendOnly) {
     if (ks && ks.getLastRow() >= 2) {
       const h = ks.getRange(1, 1, 1, ks.getLastColumn()).getValues()[0], v = ks.getRange(ks.getLastRow(), 1, 1, h.length).getValues()[0];
       const g = k => v[h.indexOf(k)];
-      if (String(g('date')) === today && g('まとめ_ラベル'))
-        kl = `\n\n🧭 **局面: ${g('まとめ_ラベル')}**（自信 ${g('まとめ_自信')}・機械 ${g('機械ラベル')}）${g('一言') ? ' ' + g('一言') : ''}`;
+      if (String(g('date')) === today && g('機械ラベル'))
+        kl = `\n\n🧭 **局面: ${g('機械ラベル')}**${g('まとめ_ラベル') ? `（AI ${g('まとめ_ラベル')}・自信 ${g('まとめ_自信')}）` : ''}　出番: ${g('出番の型') || 'なし'}`;
     }
   } catch (e) { Logger.log('局面ログの読み取り: ' + e); }
   const payload = { embeds: [{ title: `🌅 朝の地合い ${Utilities.formatDate(now, 'Asia/Tokyo', 'MM/dd')}`, description: (desc + kl).slice(0, 4000), color: 0x10B981 }] };
