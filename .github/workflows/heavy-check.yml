@@ -1,0 +1,48 @@
+name: heavy-check
+
+# 重い検証を手動で1回だけ動かす（定時実行はしない・リポジトリへのコミットもしない）。
+# Actions → heavy-check → Run workflow で、検証と対象を選んで押す。
+# 結果はこの実行の Summary（表）と、下の Artifacts（CSV）に出る。
+on:
+  workflow_dispatch:
+    inputs:
+      check:
+        description: "検証"
+        type: choice
+        options: [week_flow]
+        default: week_flow
+      universe:
+        description: "対象"
+        type: choice
+        options: [AI半導体, 大型108, プライム]
+        default: AI半導体
+
+permissions:
+  contents: read
+
+concurrency:
+  group: heavy-check
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install yfinance pandas numpy requests xlrd
+      - name: Run
+        env:
+          PYTHONUNBUFFERED: "1"
+          OUT_DIR: out
+        run: python checks/${{ inputs.check }}.py --universe "${{ inputs.universe }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.check }}-${{ github.run_number }}
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 30
