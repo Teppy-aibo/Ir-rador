@@ -1,10 +1,10 @@
 /**
  * 毎朝の局面ログ（Google Apps Script版）
  * IR通知.gs・地合い.gs・検証エンジン.gs・答え合わせ.gs と同じプロジェクトに「ファイル ＋ → スクリプト」で追加して使う。
- * 初回だけ「setupKyokumen」を実行 → 平日 8:10（局面ログ）と 16:15（その日の答え合わせ）に自動で動きます。
+ * 初回だけ「setupKyokumen」を実行 → 平日 7:45（局面ログ。8:00の朝の地合いの通知の最後に一言が載る）と 16:15（その日の答え合わせ）に自動で動きます。
  * 試すときは「testKyokumen」（シートにもDiscordにも出さず、実行ログにだけ出す）。
  *
- * 1日1行、シート kyokumen に残す。目的は「マクロの層」を数字で記録して、2〜3か月後に
+ * 1日1行、シート kyokumen に残す（詳しい方は局面チャンネル、一言は 8:00 の朝の地合いの最後）。目的は「マクロの層」を数字で記録して、2〜3か月後に
  * 「この局面の日だけ型（G7・H2・E040など）を使うと成績が上がるか」を検証すること。売買の推奨はしない。
  *   1層目 数字の層（機械）: 前夜のSOX・75日線、VIXと日経VIの過去1年での位置、ドル円、CMEの日経先物の窓、
  *                          TOPIX ETF の75日線、信用評価損益率 → 機械のラベル（リスクオン／リスクオフ／恐怖／油断）
@@ -28,10 +28,10 @@ const KL_NEWS_Q = ['日経平均 OR 東証', '半導体 株価', '米国株 OR �
 function setupKyokumen() {
   ScriptApp.getProjectTriggers().filter(t => ['kyokumen', 'kyokumenReview'].includes(t.getHandlerFunction()))
     .forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('kyokumen').timeBased().everyDays(1).atHour(8).nearMinute(10).inTimezone('Asia/Tokyo').create();
+  ScriptApp.newTrigger('kyokumen').timeBased().everyDays(1).atHour(7).nearMinute(45).inTimezone('Asia/Tokyo').create();
   ScriptApp.newTrigger('kyokumenReview').timeBased().everyDays(1).atHour(16).nearMinute(15).inTimezone('Asia/Tokyo').create();
   sheet_('kyokumen', KL_HEADER);
-  Logger.log('毎朝8:10の局面ログと、16:15の答え合わせを登録しました');
+  Logger.log('毎朝7:45の局面ログと、16:15の答え合わせを登録しました');
 }
 
 function testKyokumen() { kyokumen_(true); }
