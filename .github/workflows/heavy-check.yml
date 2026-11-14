@@ -9,7 +9,7 @@ on:
       check:
         description: "検証"
         type: choice
-        options: [week_flow]
+        options: [week_flow, bnf_stage]
         default: week_flow
       universe:
         description: "対象"
