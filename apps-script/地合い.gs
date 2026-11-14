@@ -148,7 +148,18 @@ function morning_(dry, resendOnly) {
     `ドル円 ${reg.ドル円 || '—'}（${sign(reg.ドル円_chg)}）/ 日経先物 ${fut ? Math.round(fut) : '—'}（日経終値比 ${sign(gap)}）\n\n` +
     `**前日の業種**（上昇 ${up}/${rows.length}）\n📈 ${reg.前日_強い業種}\n📉 ${reg.前日_弱い業種}\n` +
     `🟢主導: ${reg.主導 || 'なし'}\n🔵改善（次の候補）: ${reg.改善 || 'なし'}\n\n${g7}`;
-  const payload = { embeds: [{ title: `🌅 朝の地合い ${Utilities.formatDate(now, 'Asia/Tokyo', 'MM/dd')}`, description: desc.slice(0, 4000), color: 0x10B981 }] };
+  // 7:45 の局面ログ（局面ログ.gs）があれば、その一言を最後に載せる（詳しい方は局面チャンネル）
+  let kl = '';
+  try {
+    const ks = book_().getSheetByName('kyokumen');
+    if (ks && ks.getLastRow() >= 2) {
+      const h = ks.getRange(1, 1, 1, ks.getLastColumn()).getValues()[0], v = ks.getRange(ks.getLastRow(), 1, 1, h.length).getValues()[0];
+      const g = k => v[h.indexOf(k)];
+      if (String(g('date')) === today && g('機械ラベル'))
+        kl = `\n\n🧭 **局面: ${g('機械ラベル')}**${g('まとめ_ラベル') ? `（AI ${g('まとめ_ラベル')}・自信 ${g('まとめ_自信')}）` : ''}　出番: ${g('出番の型') || 'なし'}`;
+    }
+  } catch (e) { Logger.log('局面ログの読み取り: ' + e); }
+  const payload = { embeds: [{ title: `🌅 朝の地合い ${Utilities.formatDate(now, 'Asia/Tokyo', 'MM/dd')}`, description: (desc + kl).slice(0, 4000), color: 0x10B981 }] };
   if (dry) { Logger.log(desc); return; }
   if (resendOnly) { postDiscordSafe_(payload); return; }
 
