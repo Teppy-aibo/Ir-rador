@@ -74,7 +74,7 @@ function klNumbers_() {
   x.cmeGap = fut.length && nkClose ? Math.round((fut[fut.length - 1].c / nkClose - 1) * 10000) / 100 : '';
   const tp = splitAdj_(daily_('1306.T', '6mo'));
   x.topixUp75 = tp.length >= 75 ? tp[tp.length - 1].c > tp.slice(-75).reduce((s, b) => s + b.c, 0) / 75 : '';
-  try { exFetchMPL_(c); x.mpl = c.D.MPL ? c.D.MPL[c.D.MPL.length - 1].c : ''; } catch (e) { x.mpl = ''; }
+  try { exFetchMPL_(c); const m = c.D.MPL ? c.D.MPL[c.D.MPL.length - 1] : null; x.mpl = m ? m.c : ''; x.mplDate = m ? m.d : ''; } catch (e) { x.mpl = ''; x.mplDate = ''; }
   // 機械のラベル: 恐怖を先に見る（E040 の条件と同じ「過去1年の上位10%」）
   const hi = v => v !== '' && v >= 0.9, lo = v => v !== '' && v <= 0.1;
   x.label = (hi(x.nviPct) || hi(x.vixPct) || (x.cmeGap !== '' && x.cmeGap <= -2)) ? '恐怖'
@@ -89,7 +89,7 @@ function klNumbersText_(x) {
     `VIX ${x.vix || '不明'}（過去1年の位置 ${x.vixPct === '' ? '不明' : x.vixPct}、0=最低〜1=最高）\n` +
     `日経VI ${x.nvi || '不明'}（過去1年の位置 ${x.nviPct === '' ? '不明' : x.nviPct}）\n` +
     `ドル円 ${s(x.usdjpy)}（プラス＝円安）／CMEの日経先物は日経平均の終値比 ${s(x.cmeGap)}\n` +
-    `TOPIX ETF は75日線の${x.topixUp75 === '' ? '?' : x.topixUp75 ? '上' : '下'}／信用評価損益率 ${x.mpl === '' ? '不明' : x.mpl + '%'}（-15%以下で投げが近い）\n` +
+    `TOPIX ETF は75日線の${x.topixUp75 === '' ? '?' : x.topixUp75 ? '上' : '下'}／信用評価損益率 ${x.mpl === '' ? '不明' : x.mpl + '%'}（${x.mplDate ? x.mplDate.slice(4, 6) + '/' + x.mplDate.slice(6) + '申込分。週1回・公表は翌週なので、今朝の苦しさより1〜2週遅れの値' : '日付不明'}。-15%以下で投げが近い。暴落の後は投げが済んだ後の値のこともある）\n` +
     `機械のラベル: ${x.label}`;
 }
 
