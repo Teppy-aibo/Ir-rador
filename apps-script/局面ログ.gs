@@ -12,6 +12,7 @@
  *   答え合わせ（16:15）: その日の TOPIX ETF・日経ETF・AI半導体8銘柄の寄り→引けを同じ行に書き足す
  *
  * 使うスクリプトのプロパティ（IR通知と共通）: ANTHROPIC_API_KEY、SECTOR_WEBHOOK_URL または DISCORD_WEBHOOK_URL
+ * 任意: KYOKUMEN_WEBHOOK_URL（局面専用のDiscordチャンネル。あれば朝の地合いとは別のチャンネルに送る）
  * 任意: DEBATE_MODEL（3役のモデル、既定 claude-sonnet-5-5）、JUDGE_MODEL（まとめ役、既定 FINAL_MODEL か claude-opus-5-5）
  */
 
@@ -232,7 +233,16 @@ function kyokumen_(dry) {
   const last = sh.getLastRow();
   if (last >= 2 && String(sh.getRange(last, 1).getValue()) === today) sh.getRange(last, 1, 1, row.length).setValues([row]);
   else sh.appendRow(row);
-  postDiscordSafe_({ embeds: [{ title: `🧭 今日の局面 ${Utilities.formatDate(now, 'Asia/Tokyo', 'MM/dd')}`, description: desc.slice(0, 4000), color: 0x6366F1 }] });
+  const payload = { embeds: [{ title: `🧭 今日の局面 ${Utilities.formatDate(now, 'Asia/Tokyo', 'MM/dd')}`, description: desc.slice(0, 4000), color: 0x6366F1 }] };
+  const url = P.getProperty('KYOKUMEN_WEBHOOK_URL');
+  if (!url) { postDiscordSafe_(payload); return; }
+  // 局面専用のチャンネルへ（朝の地合いの通知と混ざらないように）。失敗したら3回までやり直す
+  for (let i = 0; i < 3; i++) {
+    const r = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
+    if (r.getResponseCode() < 300) return;
+    Logger.log(`局面の通知の送信失敗 ${r.getResponseCode()}: ${r.getContentText().slice(0, 200)}`);
+    Utilities.sleep(3000 * (i + 1));
+  }
 }
 
 // ---------- 答え合わせ（16:15） ----------
