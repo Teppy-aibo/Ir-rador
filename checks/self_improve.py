@@ -237,7 +237,8 @@ def halves(tr: pd.DataFrame, lo: pd.Timestamp, hi: pd.Timestamp):
 
 
 def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: bool, stop_rule: str = "1y", every: int = 1):
-    """stop_rule: 1y=直近1年の平均がマイナスで止める / 2y=直近2年の前半・後半とも平均マイナスで止める。every: 何週に1回見直すか"""
+    """stop_rule: 1y=直近1年の平均がマイナスで止める / 2y=直近2年の前半・後半とも平均マイナスで止める
+    n20=直近20回の平均がマイナスで止める（今の紙トレの基準） / n40=直近40回を20回ずつに分け、両方マイナスで止める。every: 何週に1回見直すか"""
     cfg = {k: dict(v) for k, v in DEFAULT.items()}
     on = {k: True for k in KNOBS}
     cache: dict[tuple, pd.DataFrame] = {}
@@ -278,6 +279,19 @@ def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: 
                             if len(last) >= 15 and last.mean() < 0:
                                 on[fam] = False
                                 log.append(dict(date=day, 型=fam, 変更="止める", 理由=f"直近1年 平均{last.mean():.2f}R（{len(last)}回）"))
+                                continue
+                        elif stop_rule in ("n20", "n40"):
+                            last = cur[cur["exit"] < day].sort_values("exit")["R"]
+                            if stop_rule == "n20":
+                                bad = len(last) >= 20 and last.iloc[-20:].mean() < 0
+                                why = f"直近20回 平均{last.iloc[-20:].mean():.2f}R" if bad else ""
+                            else:
+                                a, b = last.iloc[-40:-20], last.iloc[-20:]
+                                bad = len(last) >= 40 and a.mean() < 0 and b.mean() < 0
+                                why = f"直近40回 前の20回{a.mean():.2f}R・後の20回{b.mean():.2f}R" if bad else ""
+                            if bad:
+                                on[fam] = False
+                                log.append(dict(date=day, 型=fam, 変更="止める", 理由=why))
                                 continue
                         else:
                             s1, s2 = halves(cur, lo2, day)
@@ -376,7 +390,8 @@ def main() -> None:
     eq_f, _, done_f, _, _ = simulate(trades, days, adaptive=False)
     variants = {}
     for name, kw in (("止める基準を重く", dict(stop_rule="2y", every=1)), ("四半期に1回", dict(stop_rule="1y", every=13)),
-                     ("重く＋四半期", dict(stop_rule="2y", every=13))):
+                     ("重く＋四半期", dict(stop_rule="2y", every=13)),
+                     ("今の基準（20回マイナス）", dict(stop_rule="n20", every=1)), ("40回を半分ずつ", dict(stop_rule="n40", every=1))):
         variants[name] = simulate(trades, days, adaptive=True, **kw)
 
     OUT.mkdir(parents=True, exist_ok=True)
