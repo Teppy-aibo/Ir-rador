@@ -48,16 +48,16 @@ KNOBS = {
     "G7": {"upper": [0.12, 0.16, 0.20], "below75": [0, 1], "mkt": [0, 1]},
     "窓買い": {"gmin": [0.03, 0.05, 0.08], "vm": [1.5, 2.0, 3.0], "cp": [0.5, 0.7], "ma200": [0, 1], "mkt": [0, 1], "hold": [5, 10, 20]},
     "連動売り": {"band": [0.10, 0.05]},
-    "恐怖買い": {"thr": [0.90, 0.95], "hold": [1, 3, 5]},
+    "恐怖買い": {"thr": [0.90, 0.95], "hold": [1, 3, 5], "gd": [1, 0], "ai": [0, 1]},
 }
 DEFAULT = {"G7": {"upper": 0.20, "below75": 0, "mkt": 0},
            "窓買い": {"gmin": 0.05, "vm": 2.0, "cp": 0.5, "ma200": 0, "mkt": 0, "hold": 10},
-           "連動売り": {"band": 0.10}, "恐怖買い": {"thr": 0.90, "hold": 3}}
+           "連動売り": {"band": 0.10}, "恐怖買い": {"thr": 0.90, "hold": 3, "gd": 1, "ai": 0}}
 # 負けの札 → 動かすつまみ
 FIX = {"G7": {"地合い": ["mkt"], "逆張り": ["below75"], "飛び越え": ["upper"], "大きい窓": ["upper"]},
        "窓買い": {"地合い": ["mkt"], "逆張り": ["ma200"], "飛び越え": ["cp", "gmin"], "大きい窓": ["vm", "gmin"]},
        "連動売り": {"地合い": ["band"], "逆張り": ["band"], "飛び越え": ["band"], "大きい窓": ["band"]},
-       "恐怖買い": {"地合い": ["thr", "hold"], "逆張り": ["thr"], "飛び越え": ["hold"], "大きい窓": ["thr"]}}
+       "恐怖買い": {"地合い": ["thr", "hold", "gd"], "逆張り": ["thr", "ai"], "飛び越え": ["hold"], "大きい窓": ["thr", "gd"]}}
 PRIORITY = ["G7", "連動売り", "恐怖買い", "窓買い"]
 
 
@@ -138,13 +138,13 @@ def build_trades(data: dict[str, pd.DataFrame], codes: list[str]) -> dict[str, p
                         row[f"R{hold}"] = R
                         row[f"tags{hold}"] = tag(1, R, gap, bool(c[t] < ma75[t]), m)
                     out["窓買い"].append(row)
-        # 恐怖買い（AI半導体だけ）
-        if code in AI:
+        # 恐怖買い（11/16: E037 に合わせて全銘柄で作る。gd=窓下げ-2%以下だけ、ai=AI半導体だけ はつまみで選ぶ）
+        if True:
             vp = prev_night(vix.rolling(252).rank(pct=True), d).to_numpy()
             for t in range(201, n - 6):
                 if not (vp[t] >= 0.90):
                     continue
-                row = dict(code=code, entry=d[t], px=o[t], stop=5.0, side=1, gap=o[t] / c[t - 1] - 1, vix=vp[t])
+                row = dict(code=code, entry=d[t], px=o[t], stop=5.0, side=1, gap=o[t] / c[t - 1] - 1, vix=vp[t], ai=int(code in AI))
                 for hold in (1, 3, 5):
                     j_end = t + hold - 1
                     ex_px, ex_i = c[j_end], j_end
@@ -215,7 +215,12 @@ def select(fam: str, ev: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         return ev[ev["deep"] == 1] if cfg["band"] == 0.05 else ev
     if fam == "恐怖買い":
         k = cfg["hold"]
-        s = ev[ev["vix"] >= cfg["thr"]]
+        m = ev["vix"] >= cfg["thr"]
+        if cfg["gd"]:
+            m &= ev["gap"] <= -0.02
+        if cfg["ai"]:
+            m &= ev["ai"] == 1
+        s = ev[m]
         return s.assign(exit=s[f"exit{k}"], ret=s[f"ret{k}"], R=s[f"R{k}"], tags=s[f"tags{k}"])
     raise ValueError(fam)
 
@@ -236,7 +241,8 @@ def halves(tr: pd.DataFrame, lo: pd.Timestamp, hi: pd.Timestamp):
     return s[s["entry"] < mid]["R"], s[s["entry"] >= mid]["R"]
 
 
-def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: bool, stop_rule: str = "1y", every: int = 1):
+def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: bool, stop_rule: str = "1y", every: int = 1,
+             restart: float = 0.1):
     """stop_rule: 1y=直近1年の平均がマイナスで止める / 2y=直近2年の前半・後半とも平均マイナスで止める
     n20=直近20回の平均がマイナスで止める（今の紙トレの基準） / n40=直近40回を20回ずつに分け、両方マイナスで止める。every: 何週に1回見直すか"""
     cfg = {k: dict(v) for k, v in DEFAULT.items()}
@@ -320,9 +326,15 @@ def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: 
                             chg = ", ".join(f"{k}:{cfg[fam][k]}→{best[k]}" for k in best if best[k] != cfg[fam][k])
                             log.append(dict(date=day, 型=fam, 変更=chg, 理由=f"直近13週の負けで多い札「{top}」{int(cnt.iloc[0])}回、前後半とも+{best_gain:.2f}R以上"))
                             cfg[fam] = best
+                    elif stop_rule in ("n20", "n40"):
+                        last = cur[cur["exit"] < day].sort_values("exit")["R"]
+                        a, b = last.iloc[-40:-20], last.iloc[-20:]
+                        if len(last) >= 40 and a.mean() >= restart and b.mean() >= restart:
+                            on[fam] = True
+                            log.append(dict(date=day, 型=fam, 変更="再開", 理由=f"直近40回 前の20回{a.mean():.2f}R・後の20回{b.mean():.2f}R"))
                     else:
                         b1, b2 = halves(cur, lo2, day)
-                        if len(b1) >= 8 and len(b2) >= 8 and b1.mean() > 0.1 and b2.mean() > 0.1:
+                        if len(b1) >= 8 and len(b2) >= 8 and b1.mean() > restart and b2.mean() > restart:
                             on[fam] = True
                             log.append(dict(date=day, 型=fam, 変更="再開", 理由=f"直近2年 前半{b1.mean():.2f}R・後半{b2.mean():.2f}R"))
         # 入る
@@ -391,7 +403,9 @@ def main() -> None:
     variants = {}
     for name, kw in (("止める基準を重く", dict(stop_rule="2y", every=1)), ("四半期に1回", dict(stop_rule="1y", every=13)),
                      ("重く＋四半期", dict(stop_rule="2y", every=13)),
-                     ("今の基準（20回マイナス）", dict(stop_rule="n20", every=1)), ("40回を半分ずつ", dict(stop_rule="n40", every=1))):
+                     ("今の基準（20回マイナス）", dict(stop_rule="n20", every=1)), ("40回を半分ずつ", dict(stop_rule="n40", every=1)),
+                     ("40回・戻す0R", dict(stop_rule="n40", every=1, restart=0.0)),
+                     ("40回・戻す+0.2R", dict(stop_rule="n40", every=1, restart=0.2))):
         variants[name] = simulate(trades, days, adaptive=True, **kw)
 
     OUT.mkdir(parents=True, exist_ok=True)
@@ -412,6 +426,7 @@ def main() -> None:
     md = f"## 自分で直し続ける仕組み vs 直さない（元手{START_CASH:,}円・{SIM_START:%Y-%m}〜{days[-1]:%Y-%m-%d}）\n\n"
     md += tbl(pd.DataFrame([summary("直す（週1・1年で止める）", eq_a, done_a), summary("直さない", eq_f, done_f)]
                            + [summary(k, v[0], v[2]) for k, v in variants.items()]))
+    summ = md.split("\n\n", 1)[1]
     for k, v in variants.items():
         lg = v[1]
         md += f"\n### {k}: 直した記録（{len(lg)}回）\n" + tbl(lg.assign(date=lg["date"].dt.strftime("%Y-%m-%d")) if len(lg) else lg)
@@ -432,6 +447,24 @@ def main() -> None:
     md += "\n### 負けの札（直す口座）\n" + tbl(pd.Series(lt, dtype=str).value_counts().rename_axis("札").reset_index(name="回数"))
     wk = pd.DataFrame({"直す": eq_a, "直さない": eq_f, **{k: v[0] for k, v in variants.items()}}).resample("ME").last().ffill().astype(int)
     md += "\n### 月末の残高\n" + tbl(wk.reset_index().assign(date=lambda x: x["date"].dt.strftime("%Y-%m")))
+    # 決め事を固定したときの1回あたり（口座に入れる前の素の成績。前半=〜2023、後半=2024〜）
+    rows = []
+    for fam in KNOBS:
+        names = list(KNOBS[fam])
+        for vals in itertools.product(*(KNOBS[fam][k] for k in names)):
+            c = dict(zip(names, vals))
+            if fam == "窓買い" and (c["vm"] != 2.0 or c["cp"] != 0.5 or c["ma200"] or c["hold"] != 10):
+                continue  # 窓買いは窓の大きさと地合いだけ見る
+            tr = select(fam, trades[fam], c)
+            tr = tr[tr["entry"] >= pd.Timestamp("2018-01-01")]
+            if len(tr) < 10:
+                continue
+            a, b = tr[tr["entry"] < pd.Timestamp("2024-01-01")]["R"], tr[tr["entry"] >= pd.Timestamp("2024-01-01")]["R"]
+            rows.append(dict(型=fam, 決め事=str(c), 回数=len(tr), 平均R=round(tr["R"].mean(), 3),
+                             前半R=round(a.mean(), 3) if len(a) else "", 後半R=round(b.mean(), 3) if len(b) else "",
+                             損益率平均=round(tr["ret"].mean(), 2)))
+    md += f"\n### 決め事を固定したときの1回あたり（コスト{COST}%込み）\n" + tbl(pd.DataFrame(rows))
+    md += "\n### まとめ（上と同じ）\n" + summ
     print(md)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
