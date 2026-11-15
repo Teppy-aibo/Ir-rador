@@ -236,7 +236,8 @@ def halves(tr: pd.DataFrame, lo: pd.Timestamp, hi: pd.Timestamp):
     return s[s["entry"] < mid]["R"], s[s["entry"] >= mid]["R"]
 
 
-def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: bool):
+def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: bool, stop_rule: str = "1y", every: int = 1):
+    """stop_rule: 1y=直近1年の平均がマイナスで止める / 2y=直近2年の前半・後半とも平均マイナスで止める。every: 何週に1回見直すか"""
     cfg = {k: dict(v) for k, v in DEFAULT.items()}
     on = {k: True for k in KNOBS}
     cache: dict[tuple, pd.DataFrame] = {}
@@ -250,6 +251,7 @@ def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: 
     cash, open_pos, curve, log, done = START_CASH, [], [], [], []
     by_day = None
     week = None
+    nweek = -1
     for day in days[days >= SIM_START]:
         # 手じまい
         keep = []
@@ -265,16 +267,24 @@ def simulate(trades: dict[str, pd.DataFrame], days: pd.DatetimeIndex, adaptive: 
         wk = day.isocalendar()[:2]
         if wk != week:
             week = wk
-            if adaptive:
+            nweek += 1
+            if adaptive and nweek % every == 0:
                 for fam in KNOBS:
                     cur = get(fam, cfg[fam])
                     lo2, lo1 = day - pd.Timedelta(weeks=104), day - pd.Timedelta(weeks=52)
                     if on[fam]:
-                        last = cur[(cur["entry"] >= lo1) & (cur["exit"] < day)]["R"]
-                        if len(last) >= 15 and last.mean() < 0:
-                            on[fam] = False
-                            log.append(dict(date=day, 型=fam, 変更="止める", 理由=f"直近1年 平均{last.mean():.2f}R（{len(last)}回）"))
-                            continue
+                        if stop_rule == "1y":
+                            last = cur[(cur["entry"] >= lo1) & (cur["exit"] < day)]["R"]
+                            if len(last) >= 15 and last.mean() < 0:
+                                on[fam] = False
+                                log.append(dict(date=day, 型=fam, 変更="止める", 理由=f"直近1年 平均{last.mean():.2f}R（{len(last)}回）"))
+                                continue
+                        else:
+                            s1, s2 = halves(cur, lo2, day)
+                            if len(s1) >= 15 and len(s2) >= 15 and s1.mean() < 0 and s2.mean() < 0:
+                                on[fam] = False
+                                log.append(dict(date=day, 型=fam, 変更="止める", 理由=f"直近2年 前半{s1.mean():.2f}R・後半{s2.mean():.2f}R"))
+                                continue
                         recent = cur[(cur["entry"] >= day - pd.Timedelta(weeks=13)) & (cur["exit"] < day) & (cur["R"] < 0)]
                         if recent.empty:
                             continue
@@ -364,9 +374,13 @@ def main() -> None:
     days = data["1321.T"].index
     eq_a, log_a, done_a, cfg_a, on_a = simulate(trades, days, adaptive=True)
     eq_f, _, done_f, _, _ = simulate(trades, days, adaptive=False)
+    variants = {}
+    for name, kw in (("止める基準を重く", dict(stop_rule="2y", every=1)), ("四半期に1回", dict(stop_rule="1y", every=13)),
+                     ("重く＋四半期", dict(stop_rule="2y", every=13))):
+        variants[name] = simulate(trades, days, adaptive=True, **kw)
 
     OUT.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({"直す": eq_a, "直さない": eq_f}).to_csv(OUT / "self_improve_equity.csv", encoding="utf-8-sig")
+    pd.DataFrame({"直す": eq_a, "直さない": eq_f, **{k: v[0] for k, v in variants.items()}}).to_csv(OUT / "self_improve_equity.csv", encoding="utf-8-sig")
     log_a.to_csv(OUT / "self_improve_log.csv", index=False, encoding="utf-8-sig")
     done_a.to_csv(OUT / "self_improve_trades_adaptive.csv", index=False, encoding="utf-8-sig")
     done_f.to_csv(OUT / "self_improve_trades_fixed.csv", index=False, encoding="utf-8-sig")
@@ -381,7 +395,15 @@ def main() -> None:
         return s
 
     md = f"## 自分で直し続ける仕組み vs 直さない（元手{START_CASH:,}円・{SIM_START:%Y-%m}〜{days[-1]:%Y-%m-%d}）\n\n"
-    md += tbl(pd.DataFrame([summary("直す", eq_a, done_a), summary("直さない", eq_f, done_f)]))
+    md += tbl(pd.DataFrame([summary("直す（週1・1年で止める）", eq_a, done_a), summary("直さない", eq_f, done_f)]
+                           + [summary(k, v[0], v[2]) for k, v in variants.items()]))
+    for k, v in variants.items():
+        lg = v[1]
+        md += f"\n### {k}: 直した記録（{len(lg)}回）\n" + tbl(lg.assign(date=lg["date"].dt.strftime("%Y-%m-%d")) if len(lg) else lg)
+        if len(v[2]):
+            g = v[2].groupby("型").agg(回数=("R", "size"), 平均R=("R", "mean"), 損益=("pnl", "sum")).round(3).reset_index()
+            g["損益"] = g["損益"].astype(int)
+            md += f"\n### {k}: 型ごと\n" + tbl(g)
     for name, dn in (("直す", done_a), ("直さない", done_f)):
         if len(dn):
             g = dn.groupby("型").agg(回数=("R", "size"), 平均R=("R", "mean"), 損益=("pnl", "sum")).round(3).reset_index()
@@ -393,7 +415,7 @@ def main() -> None:
     md += "\n### 最後の決め事（直す口座）\n" + "\n".join(f"- {k}: {'使う' if on_a[k] else '止めている'} {cfg_a[k]}" for k in KNOBS) + "\n"
     lt = [t for ts in done_a[done_a["pnl"] < 0]["tags"] for t in ts] if len(done_a) else []
     md += "\n### 負けの札（直す口座）\n" + tbl(pd.Series(lt, dtype=str).value_counts().rename_axis("札").reset_index(name="回数"))
-    wk = pd.DataFrame({"直す": eq_a, "直さない": eq_f}).resample("ME").last().astype(int)
+    wk = pd.DataFrame({"直す": eq_a, "直さない": eq_f, **{k: v[0] for k, v in variants.items()}}).resample("ME").last().ffill().astype(int)
     md += "\n### 月末の残高\n" + tbl(wk.reset_index().assign(date=lambda x: x["date"].dt.strftime("%Y-%m")))
     print(md)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
