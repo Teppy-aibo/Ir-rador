@@ -9,7 +9,7 @@ on:
       check:
         description: "検証"
         type: choice
-        options: [week_flow, bnf_stage, kyokumen_bt, linkage, channel_break, self_improve, self_improve_cost, morning_plan, sector_reps, sector_sim]
+        options: [week_flow, bnf_stage, kyokumen_bt, linkage, channel_break, self_improve, self_improve_cost, morning_plan, sector_reps, sector_sim, sunaosa]
         default: week_flow
       universe:
         description: "対象"
