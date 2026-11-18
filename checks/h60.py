@@ -235,8 +235,25 @@ def main():
     for k in sorted(ev["kind"].unique()):
         res.append(dict(案=k, **stats(ev[ev["kind"] == k], split)))
     tab = pd.DataFrame(res)
+    # 案4の買いは「ずっと持っていた」場合と比べる（上げ相場の分を引く）
+    cmp = []
+    for s_, b in data.items():
+        code = s_.replace(".T", "")
+        x = ev[(ev["code"] == code) & (ev["kind"] == "案4 うち買い")]
+        if x.empty:
+            continue
+        lng = float(np.prod(1 + (x["ret"] + COST) / 100) - 1) * 100
+        lng_c = float(np.prod(1 + x["ret"] / 100) - 1) * 100
+        bh = (b["close"].iloc[-1] / b["open"].iloc[30] - 1) * 100
+        cmp.append(dict(銘柄=code, 買いだけ_コスト前=round(lng, 1), 買いだけ_コスト込み=round(lng_c, 1), ずっと持つ=round(bh, 1), 回数=len(x)))
+    cmpt = pd.DataFrame(cmp)
+    if not cmpt.empty:
+        cmpt.to_csv(OUT / "h60_cross_vs_hold.csv", index=False)
     tab.to_csv(OUT / "h60_summary.csv", index=False)
     md = f"## 60分足5案（{a.universe}、{len(data)}銘柄、{ev['d'].min().date()}〜{ev['d'].max().date()}、損益%はコスト0.1%込み）\n\n" + tab.to_markdown(index=False)
+    if not cmpt.empty:
+        md += "\n\n### 案4の買いだけ vs ずっと持つ（期間全体の累計%）\n\n" + cmpt.to_markdown(index=False) + \
+              f"\n\n買いだけが勝った銘柄 {int((cmpt['買いだけ_コスト込み'] > cmpt['ずっと持つ']).sum())}/{len(cmpt)}、中央値の差 {round(float((cmpt['買いだけ_コスト込み'] - cmpt['ずっと持つ']).median()), 1)}%"
     print(md)
     import os
     p = os.environ.get("GITHUB_STEP_SUMMARY")
