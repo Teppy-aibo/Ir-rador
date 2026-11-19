@@ -28,7 +28,7 @@ def rsi(s, n=14):
     return 100 - 100/(1+up/dn)
 
 def main():
-    argparse.ArgumentParser().add_argument("--universe", default="").parse_known_args()
+    ap = argparse.ArgumentParser(); ap.add_argument("--universe", default=""); ap.parse_known_args()
     OUT.mkdir(exist_ok=True)
     rows = []
     for c, name in CODES.items():
