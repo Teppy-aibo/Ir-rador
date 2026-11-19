@@ -9,7 +9,7 @@ on:
       check:
         description: "検証"
         type: choice
-        options: [week_flow, bnf_stage, kyokumen_bt, linkage, channel_break, self_improve, self_improve_cost, morning_plan, sector_reps, sector_sim, fastretail_fade]
+        options: [week_flow, bnf_stage, kyokumen_bt, linkage, channel_break, self_improve, self_improve_cost, morning_plan, sector_reps, sector_sim, fastretail_fade, stock_snapshot]
         default: week_flow
       universe:
         description: "対象"
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install yfinance pandas numpy requests xlrd openpyxl
+      - run: pip install yfinance pandas numpy requests xlrd openpyxl tabulate
       - name: Run
         env:
           PYTHONUNBUFFERED: "1"
